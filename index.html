@@ -217,6 +217,36 @@
   .muted{ color:var(--muted) }
   .flex{ display:flex; gap:10px; align-items:center }
   .right{ margin-left:auto }
+  /* Dùng cho mobile – ép controls-panel xuống dòng và thu gọn */
+@media (max-width: 480px) {
+
+  .controls-panel {
+    display: flex;
+    flex-wrap: wrap;         /* Quan trọng: Cho xuống dòng */
+    gap: 8px;
+    width: 100%;
+  }
+
+  .controls-panel label {
+    width: 100%;             /* Mỗi label nằm 1 dòng */
+    font-size: 14px;
+  }
+
+  .threshold-input {
+    width: 100%;             /* Input chiếm rộng theo màn hình */
+  }
+
+  #save-thr,
+  #toggle-theme {
+    width: 48%;
+    min-width: 48%;          /* Hai nút nằm cạnh nhau */
+  }
+
+  header .controls {
+    width: 100%;
+  }
+}
+
 </style>
 </head>
 <body data-theme="light">
