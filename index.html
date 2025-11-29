@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Hệ Thống Quan Trắc Môi Trường - ESP32</title>
+
+<!-- Firebase v8 + Chart.js v3 (CDN) -->
+<script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-database.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Styles: clean modern dashboard -->
+<style>
+  :root{
+    --bg: #f1f6fb;
+    --card: #ffffff;
+    --muted:#6b7280;
+    --accent: #007bff;
+    --accent-2:#0056d6;
+    --success:#16a34a;
+    --danger:#e11d48;
+    --glass: rgba(255,255,255,0.6);
+    --radius:12px;
+    --shadow: 0 6px 20px rgba(15,23,42,0.08);
+    --glass-2: rgba(0,0,0,0.03);
+  }
+  [data-theme="dark"]{
+    --bg: #0b1020;
+    --card: #0f1724;
+    --muted: #9ca3af;
+    --accent: #4fc3ff;
+    --accent-2:#1e90ff;
+    --success:#34d399;
+    --danger:#fb7185;
+    --glass: rgba(255,255,255,0.03);
+    --glass-2: rgba(255,255,255,0.02);
+    color: #e6eef8;
+  }
+
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;
+    font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+    background: linear-gradient(180deg, var(--bg) 0%, rgba(0,0,0,0.02) 100%);
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+    color: #071133;
+  }
+
+  header.topbar{
+    display:flex;
+    gap:12px;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 18px;
+    background: linear-gradient(90deg,var(--accent),var(--accent-2));
+    color:white;
+    position:sticky;
+    top:0;
+    z-index:50;
+    box-shadow:var(--shadow);
+  }
+  header .title { font-weight:700; font-size:18px }
+  header .controls { display:flex; gap:10px; align-items:center }
+
+  .container{
+    width:95%;
+    max-width:1200px;
+    margin:18px auto;
+  }
+
+  /* GRID of cards */
+  .grid {
+    display:grid;
+    grid-template-columns: repeat( auto-fit, minmax(220px, 1fr) );
+    gap:16px;
+    align-items:stretch;
+  }
+
+  .card{
+    background:var(--card);
+    border-radius:var(--radius);
+    padding:14px;
+    box-shadow:var(--shadow);
+    transition:transform .18s ease, box-shadow .18s ease;
+    overflow:hidden;
+  }
+  .card:hover{ transform:translateY(-6px); box-shadow:0 12px 32px rgba(2,6,23,0.12) }
+
+  .card .name{ font-size:14px; color:var(--muted); font-weight:600 }
+  .card .value{ font-size:32px; font-weight:700; color:var(--accent); margin-top:6px }
+  .card .meta{ font-size:12px; color:var(--muted); margin-top:6px }
+
+  /* small sparkline canvas */
+  .sparkline{ width:100%; height:36px; display:block; margin-top:8px }
+
+  /* main charts */
+  .charts {
+    display:grid;
+    grid-template-columns: 1fr;
+    gap:16px;
+    margin-top:16px;
+  }
+  @media(min-width:900px){
+    .charts{ grid-template-columns: 1fr 1fr; }
+  }
+  .chart-card{ height:300px; }
+
+  .big-chart{ height:380px; }
+
+  /* history table */
+  .history {
+    margin-top:18px;
+    background:var(--card);
+    border-radius:var(--radius);
+    padding:12px;
+    box-shadow:var(--shadow);
+    overflow:auto;
+  }
+  .history table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:13px;
+  }
+  .history th, .history td{
+    padding:8px 10px;
+    text-align:center;
+    border-bottom:1px solid var(--glass-2);
+  }
+  .history th{ position:sticky; top:0; background:linear-gradient(180deg,var(--card),var(--glass)); font-weight:600}
+  .age{ font-weight:700; }
+
+  /* controls & alerts */
+  .controls-panel{
+    display:flex;
+    gap:10px;
+    align-items:center;
+    background:var(--card);
+    padding:10px;
+    border-radius:10px;
+    box-shadow:var(--shadow);
+  }
+  .btn{
+    background:var(--accent);
+    color:white;
+    padding:8px 12px;
+    border-radius:8px;
+    border:0;
+    cursor:pointer;
+    font-weight:600;
+  }
+  .btn.secondary{ background:transparent; color:var(--accent); border:1px solid var(--glass-2) }
+
+  .threshold-input{ width:90px; padding:8px; border-radius:8px; border:1px solid var(--glass-2) }
+
+  /* alert banner */
+  #alert-bar{
+    display:none;
+    background: linear-gradient(90deg,var(--danger), #ff6b6b);
+    color:white;
+    padding:10px 14px;
+    border-radius:10px;
+    margin-bottom:12px;
+    font-weight:700;
+  }
+
+  footer {
+    width:95%;
+    max-width:1200px;
+    margin:18px auto 60px;
+    color:var(--muted);
+    font-size:13px;
+    text-align:center;
+  }
+
+  /* small helpers */
+  .muted{ color:var(--muted) }
+  .flex{ display:flex; gap:10px; align-items:center }
+  .right{ margin-left:auto }
+</style>
+</head>
+<body data-theme="light">
+
+<header class="topbar">
+  <div class="title">HỆ THỐNG QUAN TRẮC MÔI TRƯỜNG - ESP32</div>
+  <div class="controls">
+    <div class="controls-panel" role="region" aria-label="controls">
+      <label class="muted">PM2.5 alert:</label>
+      <input id="thr-dust" class="threshold-input" type="number" min="0" value="35" /> µg/m³
+      <label class="muted">CO₂ alert:</label>
+      <input id="thr-co2" class="threshold-input" type="number" min="0" value="1800" /> ppm
+      <button id="save-thr" class="btn">Lưu</button>
+      <button id="toggle-theme" class="btn secondary">Dark</button>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+  <div id="alert-bar"></div>
+
+  <!-- top cards -->
+  <section class="grid" aria-label="sensor cards">
+    <div class="card" id="card-temp">
+      <div class="name">Nhiệt độ</div>
+      <div class="value" id="temp">-- °C</div>
+      <div class="meta">Cập nhật: <span id="temp-time">--</span> ・ Tuổi: <span id="temp-age">--</span>s</div>
+      <canvas id="spark-temp" class="sparkline"></canvas>
+    </div>
+
+    <div class="card" id="card-hum">
+      <div class="name">Độ ẩm</div>
+      <div class="value" id="hum">-- %</div>
+      <div class="meta">Cập nhật: <span id="hum-time">--</span> ・ Tuổi: <span id="hum-age">--</span>s</div>
+      <canvas id="spark-hum" class="sparkline"></canvas>
+    </div>
+
+    <div class="card" id="card-dust">
+      <div class="name">PM2.5 (bụi)</div>
+      <div class="value" id="dust">-- µg/m³</div>
+      <div class="meta">Cập nhật: <span id="dust-time">--</span> ・ Tuổi: <span id="dust-age">--</span>s</div>
+      <canvas id="spark-dust" class="sparkline"></canvas>
+    </div>
+
+    <div class="card" id="card-co2">
+      <div class="name">CO₂</div>
+      <div class="value" id="CO2">-- ppm</div>
+      <div class="meta">Cập nhật: <span id="CO2-time">--</span> ・ Tuổi: <span id="CO2-age">--</span>s</div>
+      <canvas id="spark-co2" class="sparkline"></canvas>
+    </div>
+  </section>
+
+  <!-- charts -->
+  <section class="charts">
+    <div class="card chart-card">
+      <div class="name">Biểu đồ Nhiệt độ</div>
+      <canvas id="chart-temp" style="height:220px"></canvas>
+    </div>
+    <div class="card chart-card">
+      <div class="name">Biểu đồ Độ ẩm</div>
+      <canvas id="chart-hum" style="height:220px"></canvas>
+    </div>
+
+    <div class="card chart-card">
+      <div class="name">Biểu đồ PM2.5</div>
+      <canvas id="chart-dust" style="height:220px"></canvas>
+    </div>
+    <div class="card chart-card">
+      <div class="name">Biểu đồ CO₂</div>
+      <canvas id="chart-co2" style="height:220px"></canvas>
+    </div>
+
+    <div class="card big-chart" style="grid-column:1 / -1;">
+      <div class="name">Biểu đồ Tổng Hợp</div>
+      <canvas id="chart-combined" style="height:320px"></canvas>
+    </div>
+  </section>
+
+  <!-- history -->
+  <section class="history" aria-label="history">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+      <div style="font-weight:700">Bảng Lịch Sử (mới nhất ở trên)</div>
+      <input id="search" placeholder="Tìm kiếm timestamp..." style="margin-left:12px;padding:8px;border-radius:8px;border:1px solid var(--glass-2);flex:1" />
+      <button id="clear-history" class="btn secondary">Xóa lịch sử</button>
+    </div>
+
+    <div style="overflow:auto">
+      <table id="history-table">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Temp (°C)</th>
+            <th>Hum (%)</th>
+            <th>PM2.5 (µg/m³)</th>
+            <th>CO₂ (ppm)</th>
+            <th>Temp age (s)</th>
+            <th>Hum age (s)</th>
+            <th>Dust age (s)</th>
+            <th>CO₂ age (s)</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  © Hệ thống quan trắc — Tự động cập nhật từ Firebase Realtime Database. Thiết kế bởi bạn — sửa và mở rộng tuỳ ý.
+</footer>
+
+<!-- audio for alert -->
+<audio id="alert-sound">
+  <source src="https://actions.google.com/sounds/v1/alarms/medium_bell_ringing_near.ogg" type="audio/ogg">
+  <source src="https://actions.google.com/sounds/v1/alarms/medium_bell_ringing_near.mp3" type="audio/mpeg">
+</audio>
+
+<!-- Script: logic -->
+<script>
+/* ===========================
+   Firebase config - giữ nguyên
+   =========================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyDp8PLDJ11mhH0PqrjKQEK98m5ILoomVIw",
+  authDomain: "quantrac-8968e.firebaseapp.com",
+  databaseURL: "https://quantrac-8968e-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "quantrac-8968e",
+  storageBucket: "quantrac-8968e.firebasestorage.app",
+  messagingSenderId: "1005624112633",
+  appId: "1:1005624112633:web:8314a2ae728a51ad447928",
+  measurementId: "G-GQ9T8PVM2N"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+/* Database refs (tuỳ cấu trúc DB của bạn) */
+const refs = {
+  temp: db.ref('/sensor_data/temperature'),
+  hum: db.ref('/sensor_data/humidity'),
+  dust: db.ref('/sensor_data/dust'),
+  co2: db.ref('/sensor_data/CO2')
+};
+
+/* UI elements */
+const ui = {
+  temp: document.getElementById('temp'),
+  hum: document.getElementById('hum'),
+  dust: document.getElementById('dust'),
+  co2: document.getElementById('CO2'),
+  tempTime: document.getElementById('temp-time'),
+  humTime: document.getElementById('hum-time'),
+  dustTime: document.getElementById('dust-time'),
+  co2Time: document.getElementById('CO2-time'),
+  tempAge: document.getElementById('temp-age'),
+  humAge: document.getElementById('hum-age'),
+  dustAge: document.getElementById('dust-age'),
+  co2Age: document.getElementById('CO2-age'),
+  alertBar: document.getElementById('alert-bar'),
+  alertSound: document.getElementById('alert-sound'),
+  historyTable: document.querySelector('#history-table tbody'),
+  searchInput: document.getElementById('search'),
+  clearHistoryBtn: document.getElementById('clear-history')
+};
+
+/* thresholds stored in localStorage */
+const storageKeys = { dust: 'threshold_dust', co2:'threshold_co2', theme:'theme_pref' };
+const thrDustInput = document.getElementById('thr-dust');
+const thrCO2Input = document.getElementById('thr-co2');
+const saveThrBtn = document.getElementById('save-thr');
+const toggleThemeBtn = document.getElementById('toggle-theme');
+
+function loadThresholds(){
+  const td = localStorage.getItem(storageKeys.dust);
+  const tc = localStorage.getItem(storageKeys.co2);
+  if(td) thrDustInput.value = td;
+  if(tc) thrCO2Input.value = tc;
+}
+loadThresholds();
+
+saveThrBtn.addEventListener('click', ()=>{
+  localStorage.setItem(storageKeys.dust, thrDustInput.value);
+  localStorage.setItem(storageKeys.co2, thrCO2Input.value);
+  showToast('Ngưỡng đã lưu');
+});
+
+/* theme */
+function setTheme(t){
+  document.body.setAttribute('data-theme', t);
+  localStorage.setItem(storageKeys.theme, t);
+  toggleThemeBtn.textContent = t === 'dark' ? 'Light' : 'Dark';
+}
+const savedTheme = localStorage.getItem(storageKeys.theme) || 'light';
+setTheme(savedTheme);
+toggleThemeBtn.addEventListener('click', ()=>{
+  const next = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  setTheme(next);
+});
+
+/* data containers and ages */
+let ages = { temp:0, hum:0, dust:0, co2:0 };
+let latest = { temp:null, hum:null, dust:null, co2:null };
+
+/* arrays for charts */
+const MAX_POINTS = 40;
+const labels = [];
+const series = { temp:[], hum:[], dust:[], co2:[] };
+
+/* helper: update ages every second */
+setInterval(()=> {
+  ages.temp += 1; ages.hum +=1; ages.dust+=1; ages.co2+=1;
+  ui.tempAge.textContent = ages.temp.toFixed(0);
+  ui.humAge.textContent = ages.hum.toFixed(0);
+  ui.dustAge.textContent = ages.dust.toFixed(0);
+  ui.co2Age.textContent = ages.co2.toFixed(0);
+}, 1000);
+
+/* ============= CHARTS (Chart.js) ============= */
+function makeLine(ctx, label, color){
+  return new Chart(ctx, {
+    type:'line',
+    data:{
+      labels:[],
+      datasets:[{
+        label: label,
+        data:[],
+        borderColor: color,
+        backgroundColor: color,
+        fill:false,
+        pointRadius:0,
+        borderWidth:2,
+        tension: 0.35
+      }]
+    },
+    options:{
+      animation:false,
+      responsive:true,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        x:{ display:false },
+        y:{ ticks:{ maxTicksLimit:4 } }
+      },
+      elements:{
+        line:{capBezierPoints:true}
+      }
+    }
+  });
+}
+
+/* big charts */
+const chartTemp = new Chart(document.getElementById('chart-temp').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Nhiệt độ °C', data:[], borderColor:'#ff5a5f', backgroundColor:'rgba(255,90,95,0.06)', fill:true, tension:0.35 }] },
+  options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ x:{display:true}, y:{title:{display:true,text:'°C'}} } }
+});
+const chartHum = new Chart(document.getElementById('chart-hum').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'Độ ẩm %', data:[], borderColor:'#1e90ff', backgroundColor:'rgba(30,144,255,0.06)', fill:true, tension:0.35 }] },
+  options:{ responsive:true, maintainAspectRatio:false }
+});
+const chartDust = new Chart(document.getElementById('chart-dust').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'PM2.5 µg/m³', data:[], borderColor:'#8b5a2b', backgroundColor:'rgba(139,90,43,0.06)', fill:true, tension:0.35 }] },
+  options:{ responsive:true, maintainAspectRatio:false }
+});
+const chartCO2 = new Chart(document.getElementById('chart-co2').getContext('2d'), {
+  type:'line',
+  data:{ labels:[], datasets:[{ label:'CO₂ ppm', data:[], borderColor:'#ffb703', backgroundColor:'rgba(255,183,3,0.06)', fill:true, tension:0.35 }] },
+  options:{ responsive:true, maintainAspectRatio:false }
+});
+const chartCombined = new Chart(document.getElementById('chart-combined').getContext('2d'), {
+  type:'line',
+  data:{
+    labels:[],
+    datasets:[
+      { label:'Nhiệt độ °C', data:[], borderColor:'#ff5a5f', fill:false, tension:0.3, yAxisID:'y' },
+      { label:'Độ ẩm %', data:[], borderColor:'#1e90ff', fill:false, tension:0.3, yAxisID:'y' },
+      { label:'PM2.5', data:[], borderColor:'#8b5a2b', fill:false, tension:0.3, yAxisID:'y2' },
+      { label:'CO₂', data:[], borderColor:'#ffb703', fill:false, tension:0.3, yAxisID:'y2' }
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    scales:{
+      y:{ type:'linear', display:true, position:'left', title:{display:true,text:'Temp & Hum'} },
+      y2:{ type:'linear', display:true, position:'right', grid:{ drawOnChartArea:false }, title:{display:true,text:'PM2.5 & CO₂'} }
+    }
+  }
+});
+
+/* sparkline small charts */
+const sparkTemp = makeLine(document.getElementById('spark-temp').getContext('2d'), 't', '#ff5a5f');
+const sparkHum = makeLine(document.getElementById('spark-hum').getContext('2d'), 'h', '#1e90ff');
+const sparkDust = makeLine(document.getElementById('spark-dust').getContext('2d'), 'd', '#8b5a2b');
+const sparkCO2 = makeLine(document.getElementById('spark-co2').getContext('2d'), 'c', '#ffb703');
+
+/* helper: push new values into series, keep MAX_POINTS */
+function pushPoint(t, valTemp, valHum, valDust, valCO2){
+  labels.push(t);
+  if(labels.length>MAX_POINTS) labels.shift();
+  const s = series;
+  s.temp.push(valTemp); if(s.temp.length>MAX_POINTS) s.temp.shift();
+  s.hum.push(valHum); if(s.hum.length>MAX_POINTS) s.hum.shift();
+  s.dust.push(valDust); if(s.dust.length>MAX_POINTS) s.dust.shift();
+  s.co2.push(valCO2); if(s.co2.length>MAX_POINTS) s.co2.shift();
+
+  // update charts
+  chartTemp.data.labels = labels; chartTemp.data.datasets[0].data = s.temp; chartTemp.update();
+  chartHum.data.labels = labels; chartHum.data.datasets[0].data = s.hum; chartHum.update();
+  chartDust.data.labels = labels; chartDust.data.datasets[0].data = s.dust; chartDust.update();
+  chartCO2.data.labels = labels; chartCO2.data.datasets[0].data = s.co2; chartCO2.update();
+  chartCombined.data.labels = labels;
+  chartCombined.data.datasets[0].data = s.temp;
+  chartCombined.data.datasets[1].data = s.hum;
+  chartCombined.data.datasets[2].data = s.dust;
+  chartCombined.data.datasets[3].data = s.co2;
+  chartCombined.update();
+
+  // sparklines
+  sparkTemp.data.labels = labels; sparkTemp.data.datasets[0].data = s.temp; sparkTemp.update();
+  sparkHum.data.labels = labels; sparkHum.data.datasets[0].data = s.hum; sparkHum.update();
+  sparkDust.data.labels = labels; sparkDust.data.datasets[0].data = s.dust; sparkDust.update();
+  sparkCO2.data.labels = labels; sparkCO2.data.datasets[0].data = s.co2; sparkCO2.update();
+}
+
+/* ================= REAL-TIME FETCH & UI update ================== */
+
+/* helper: show toast (simple) */
+function showToast(msg, time=1200){
+  ui.alertBar.style.display = 'block';
+  ui.alertBar.style.background = 'linear-gradient(90deg,#007bff,#0056d6)';
+  ui.alertBar.textContent = msg;
+  setTimeout(()=>{ ui.alertBar.style.display='none'; }, time);
+}
+
+/* show critical alert */
+let alertTimeout = null;
+function showCritical(msg){
+  ui.alertBar.style.display = 'block';
+  ui.alertBar.style.background = 'linear-gradient(90deg,var(--danger), #ff6b6b)';
+  ui.alertBar.textContent = msg;
+  try{ ui.alertSound.currentTime = 0; ui.alertSound.play(); }catch(e){}
+  if(alertTimeout) clearTimeout(alertTimeout);
+  alertTimeout = setTimeout(()=>{ ui.alertBar.style.display='none'; }, 8000);
+}
+
+/* history store in-memory (and optionally localStorage) */
+let history = []; // newest first; limit 200
+function pushHistory(ts, t, h, d, c, agesSnap){
+  const row = { ts, t, h, d, c, ages: agesSnap };
+  history.unshift(row);
+  if(history.length>200) history.pop();
+  renderHistory();
+}
+
+/* render history table (filter by search) */
+function renderHistory(){
+  const tbody = ui.historyTable;
+  tbody.innerHTML = '';
+  const q = ui.searchInput.value.trim().toLowerCase();
+  for(const r of history){
+    if(q && !r.ts.toLowerCase().includes(q)) continue;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${r.ts}</td>
+      <td>${r.t}</td><td>${r.h}</td><td>${r.d}</td><td>${r.c}</td>
+      <td>${r.ages.temp}</td><td>${r.ages.hum}</td><td>${r.ages.dust}</td><td>${r.ages.co2}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+ui.searchInput.addEventListener('input', renderHistory);
+ui.clearHistoryBtn.addEventListener('click', ()=>{ history=[]; renderHistory(); });
+
+/* threshold checking */
+function checkThresholds(t, h, d, c){
+  const dustThr = Number(localStorage.getItem(storageKeys.dust) || thrDustInput.value);
+  const co2Thr = Number(localStorage.getItem(storageKeys.co2) || thrCO2Input.value);
+  if(d !== null && d !== undefined && d > dustThr){
+    showCritical(`CẢNH BÁO: PM2.5 vượt ngưỡng (${d} µg/m³ > ${dustThr})`);
+    highlightCard('card-dust', true);
+    return;
+  } else highlightCard('card-dust', false);
+  if(c !== null && c !== undefined && c > co2Thr){
+    showCritical(`CẢNH BÁO: CO₂ vượt ngưỡng (${c} ppm > ${co2Thr})`);
+    highlightCard('card-co2', true);
+    return;
+  } else highlightCard('card-co2', false);
+}
+
+/* small card highlight */
+function highlightCard(id, flag){
+  const el = document.getElementById(id);
+  if(!el) return;
+  if(flag){
+    el.style.boxShadow = '0 10px 30px rgba(229,29,72,0.12)';
+    el.querySelector('.value').style.color = getComputedStyle(document.body).getPropertyValue('--danger') || '#e11d48';
+  } else {
+    el.style.boxShadow = '';
+    el.querySelector('.value').style.color = getComputedStyle(document.body).getPropertyValue('--accent') || '#007bff';
+  }
+}
+
+/* update single reading */
+function applyReading(kind, value){
+  const now = new Date();
+  const tStr = now.toLocaleTimeString();
+  if(kind === 'temp'){
+    ui.temp.textContent = (value !== null && value !== undefined) ? `${value} °C` : '-- °C';
+    ui.tempTime.textContent = tStr;
+    ages.temp = 0; latest.temp = value;
+  }
+  if(kind === 'hum'){
+    ui.hum.textContent = (value !== null && value !== undefined) ? `${value} %` : '-- %';
+    ui.humTime.textContent = tStr;
+    ages.hum = 0; latest.hum = value;
+  }
+  if(kind === 'dust'){
+    ui.dust.textContent = (value !== null && value !== undefined) ? `${value} µg/m³` : '-- µg/m³';
+    ui.dustTime.textContent = tStr;
+    ages.dust = 0; latest.dust = value;
+  }
+  if(kind === 'co2'){
+    ui.co2.textContent = (value !== null && value !== undefined) ? `${value} ppm` : '-- ppm';
+    ui.co2Time.textContent = tStr;
+    ages.co2 = 0; latest.co2 = value;
+  }
+
+  // every time we have new set for all sensors, push to series/history
+  if(latest.temp !== null && latest.hum !== null && latest.dust !== null && latest.co2 !== null){
+    const ts = new Date().toLocaleString();
+    pushPoint(ts, Number(latest.temp), Number(latest.hum), Number(latest.dust), Number(latest.co2));
+    pushHistory(ts, latest.temp, latest.hum, latest.dust, latest.co2, { temp: ages.temp, hum: ages.hum, dust: ages.dust, co2: ages.co2 });
+    checkThresholds(latest.temp, latest.hum, latest.dust, latest.co2);
+  }
+}
+
+/* ================= Subscribe to firebase values ================= */
+refs.temp.on('value', snap => { applyReading('temp', snap.val()); });
+refs.hum.on('value', snap => { applyReading('hum', snap.val()); });
+refs.dust.on('value', snap => { applyReading('dust', snap.val()); });
+refs.co2.on('value', snap => { applyReading('co2', snap.val()); });
+
+/* initial combined pull every 5s to ensure synchronization */ 
+setInterval(async ()=>{
+  try{
+    const [tSnap,hSnap,dSnap,cSnap] = await Promise.all([ refs.temp.get(), refs.hum.get(), refs.dust.get(), refs.co2.get() ]);
+    if(tSnap.exists()) applyReading('temp', tSnap.val());
+    if(hSnap.exists()) applyReading('hum', hSnap.val());
+    if(dSnap.exists()) applyReading('dust', dSnap.val());
+    if(cSnap.exists()) applyReading('co2', cSnap.val());
+  }catch(e){
+    console.error('Error reading combined:', e);
+  }
+}, 5000);
+
+/* UX small improvements */
+function debounce(fn, t=200){ let to; return (...a)=>{ clearTimeout(to); to=setTimeout(()=>fn(...a), t); }; }
+
+/* keyboard: t to toggle theme */
+window.addEventListener('keydown', (e)=>{ if(e.key==='t') { toggleThemeBtn.click(); } });
+
+/* ready */
+console.info('Dashboard loaded');
+</script>
+</body>
+</html>
